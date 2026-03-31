@@ -1,71 +1,68 @@
-import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import win32more
-from win32more.core import Package
+import importlib
 
 class Win32GenApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Win32 Header Gen (win32more engine)")
-        self.root.geometry("500x380")
-        
-        # ターゲットモジュールの定義
-        self.api_map = {
-            "Kernel32 (System/Files)": "win32more.Windows.Win32.System.SystemInformation",
+        self.root.title("Win32 Header Generator (win32more)")
+        self.root.geometry("500x350")
+
+        # win32more 内の実際のモジュールパス
+        self.targets = {
+            "Kernel32 (SystemInfo)": "win32more.Windows.Win32.System.SystemInformation",
             "User32 (Windows/UI)": "win32more.Windows.Win32.UI.WindowsAndMessaging",
             "GDI (Graphics)": "win32more.Windows.Win32.Graphics.Gdi"
         }
+
         self.setup_ui()
 
     def setup_ui(self):
         pad = {'padx': 20, 'pady': 10}
-        ttk.Label(self.root, text="1. APIカテゴリの選択:", font=("Arial", 10, "bold")).pack(anchor="w", **pad)
-        self.target_cat = tk.StringVar()
-        self.combo = ttk.Combobox(self.root, textvariable=self.target_cat, values=list(self.api_map.keys()), state="readonly", width=55)
-        self.combo.set(list(self.api_map.keys())[0])
+        ttk.Label(self.root, text="APIカテゴリを選択:", font=("Arial", 10, "bold")).pack(anchor="w", **pad)
+        self.combo = ttk.Combobox(self.root, values=list(self.targets.keys()), state="readonly", width=50)
+        self.combo.current(0)
         self.combo.pack(**pad)
 
-        self.lang_var = tk.StringVar(value=".h")
-        ttk.Radiobutton(self.root, text="C Header (.h)", variable=self.lang_var, value=".h").pack(anchor="w", padx=30)
-        ttk.Radiobutton(self.root, text="C++ Header (.cpp)", variable=self.lang_var, value=".cpp").pack(anchor="w", padx=30)
+        self.ext_var = tk.StringVar(value=".h")
+        opts_frame = ttk.Frame(self.root)
+        opts_frame.pack(anchor="w", padx=30)
+        ttk.Radiobutton(opts_frame, text="C (.h)", variable=self.ext_var, value=".h").pack(side="left")
+        ttk.Radiobutton(opts_frame, text="C++ (.cpp)", variable=self.ext_var, value=".cpp").pack(side="left", padx=20)
 
-        self.btn_save = ttk.Button(self.root, text="保存して生成実行", command=self.process)
-        self.btn_save.pack(pady=30, ipadx=20, ipady=5)
+        ttk.Button(self.root, text="生成して保存", command=self.generate).pack(pady=30, ipadx=20)
 
-    def process(self):
-        ext = self.lang_var.get()
-        save_path = filedialog.asksaveasfilename(defaultextension=ext, filetypes=[("Header", f"*{ext}")])
-        if not save_path: return
+    def generate(self):
+        ext = self.ext_var.get()
+        path = filedialog.asksaveasfilename(defaultextension=ext)
+        if not path: return
 
         try:
-            module_name = self.api_map[self.target_cat.get()]
-            # 動的にインポート
-            module = __import__(module_name, fromlist=['*'])
+            mod_path = self.targets[self.combo.get()]
+            # モジュールを動的にロード
+            module = importlib.import_module(mod_path)
             
-            output = ["#pragma once", "#include <stdint.h>", "#include <windows.h>", ""]
-            if ext == ".cpp": output.append('extern "C" {')
+            lines = ["#pragma once", "#include <windows.h>", ""]
+            if ext == ".cpp": lines.append('extern "C" {')
 
-            # 属性を走査して関数を探す
             count = 0
+            # モジュール内の関数(CFUNCTYPE)を抽出
             for name in dir(module):
-                attr = getattr(module, name)
-                if callable(attr) and hasattr(attr, 'restype'):
-                    # 簡易的なプロトタイプ生成
-                    output.append(f"// {name} (Exported from {module_name})")
-                    output.append(f"void* {name}(...);") # win32moreの型推論は複雑なため簡易化
+                obj = getattr(module, name)
+                # 呼び出し可能かつ、引数型(argtypes)を持つものをWin32APIとして扱う
+                if callable(obj) and hasattr(obj, "argtypes"):
+                    lines.append(f"void* {name}(...); // From {mod_path}")
                     count += 1
 
-            if ext == ".cpp": output.append("}")
+            if ext == ".cpp": lines.append("}")
 
-            with open(save_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(output))
-            
-            messagebox.showinfo("成功", f"{count} 個の関数定義（プレースホルダ）を書き出しました。")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            messagebox.showinfo("完了", f"{count}個の関数を抽出しました。")
         except Exception as e:
-            messagebox.showerror("エラー", f"モジュールの読み込みに失敗しました: {e}")
+            messagebox.showerror("Error", f"生成失敗: {str(e)}")
 
 if __name__ == "__main__":
     root = tk.Tk()
-    Win32GenApp(root)
+    app = Win32GenApp(root)
     root.mainloop()
