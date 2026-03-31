@@ -1,0 +1,9 @@
+      - name: Build EXE with PyInstaller
+        run: |
+          pip install pyinstaller win32metadata
+          pyinstaller --onefile --noconsole main.py
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Win32HeaderGen-App
+          path: dist/main.exe
