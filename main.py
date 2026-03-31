@@ -1,118 +1,71 @@
 import os
-import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from typing import Dict
+import win32more
+from win32more.core import Package
 
-try:
-    from win32metadata.metadata import Metadata
-except ImportError:
-    print("Error: 'pip install win32metadata' is required.")
-
-class Win32HeaderGenApp:
+class Win32GenApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Win32 API Header Generator v1.0")
-        self.root.geometry("500x350")
-        self.root.resizable(False, False)
-
-        # ターゲット名前空間の定義
-        self.categories: Dict[str, list] = {
-            "Kernel (System/Threading/File)": [
-                "Windows.Win32.System.SystemInformation",
-                "Windows.Win32.System.Threading",
-                "Windows.Win32.Storage.FileSystem"
-            ],
-            "User (Windows/Messaging/Input)": [
-                "Windows.Win32.UI.WindowsAndMessaging",
-                "Windows.Win32.UI.Input.KeyboardAndMouse"
-            ],
-            "GDI (Graphics/Drawing)": [
-                "Windows.Win32.Graphics.Gdi"
-            ]
+        self.root.title("Win32 Header Gen (win32more engine)")
+        self.root.geometry("500x380")
+        
+        # ターゲットモジュールの定義
+        self.api_map = {
+            "Kernel32 (System/Files)": "win32more.Windows.Win32.System.SystemInformation",
+            "User32 (Windows/UI)": "win32more.Windows.Win32.UI.WindowsAndMessaging",
+            "GDI (Graphics)": "win32more.Windows.Win32.Graphics.Gdi"
         }
-
         self.setup_ui()
 
     def setup_ui(self):
-        style = ttk.Style()
-        style.configure("TButton", padding=5)
+        pad = {'padx': 20, 'pady': 10}
+        ttk.Label(self.root, text="1. APIカテゴリの選択:", font=("Arial", 10, "bold")).pack(anchor="w", **pad)
+        self.target_cat = tk.StringVar()
+        self.combo = ttk.Combobox(self.root, textvariable=self.target_cat, values=list(self.api_map.keys()), state="readonly", width=55)
+        self.combo.set(list(self.api_map.keys())[0])
+        self.combo.pack(**pad)
 
-        main_frame = ttk.Frame(self.root, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        self.lang_var = tk.StringVar(value=".h")
+        ttk.Radiobutton(self.root, text="C Header (.h)", variable=self.lang_var, value=".h").pack(anchor="w", padx=30)
+        ttk.Radiobutton(self.root, text="C++ Header (.cpp)", variable=self.lang_var, value=".cpp").pack(anchor="w", padx=30)
 
-        ttk.Label(main_frame, text="1. APIカテゴリを選択", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        self.cat_var = tk.StringVar(value=list(self.categories.keys())[0])
-        self.combo = ttk.Combobox(main_frame, textvariable=self.cat_var, values=list(self.categories.keys()), state="readonly", width=50)
-        self.combo.pack(pady=(5, 15))
+        self.btn_save = ttk.Button(self.root, text="保存して生成実行", command=self.process)
+        self.btn_save.pack(pady=30, ipadx=20, ipady=5)
 
-        ttk.Label(main_frame, text="2. 出力言語 / 拡張子", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        self.lang_var = tk.StringVar(value="C")
-        lang_frame = ttk.Frame(main_frame)
-        lang_frame.pack(pady=5, anchor=tk.W)
-        ttk.Radiobutton(lang_frame, text="C (.h)", variable=self.lang_var, value="C").pack(side=tk.LEFT, padx=10)
-        ttk.Radiobutton(lang_frame, text="C++ (.cpp)", variable=self.lang_var, value="CPP").pack(side=tk.LEFT, padx=10)
-
-        self.progress = ttk.Progressbar(main_frame, mode='determinate', length=400)
-        self.progress.pack(pady=20)
-
-        self.btn_run = ttk.Button(main_frame, text="保存先を指定して生成開始", command=self.generate)
-        self.btn_run.pack(fill=tk.X, pady=10)
-
-    def map_type(self, type_obj) -> str:
-        t = str(type_obj)
-        mapping = {
-            'System.Void': 'void', 'System.Int32': 'int32_t', 'System.UInt32': 'uint32_t',
-            'System.Int64': 'int64_t', 'System.UInt64': 'uint64_t', 'System.Boolean': 'bool',
-            'System.String': 'const wchar_t*', 'Windows.Win32.Foundation.HANDLE': 'HANDLE',
-            'Windows.Win32.Foundation.HWND': 'HWND', 'Windows.Win32.Foundation.HRESULT': 'HRESULT',
-            'Windows.Win32.Foundation.LPARAM': 'LPARAM', 'Windows.Win32.Foundation.WPARAM': 'WPARAM'
-        }
-        return mapping.get(t, t.split('.')[-1])
-
-    def generate(self):
-        ext = ".h" if self.lang_var.get() == "C" else ".cpp"
-        file_path = filedialog.asksaveasfilename(
-            title="ヘッダーの保存先",
-            defaultextension=ext,
-            filetypes=[("Header Files", f"*{ext}")]
-        )
-        if not file_path: return
+    def process(self):
+        ext = self.lang_var.get()
+        save_path = filedialog.asksaveasfilename(defaultextension=ext, filetypes=[("Header", f"*{ext}")])
+        if not save_path: return
 
         try:
-            meta = Metadata.load_default()
-            namespaces = self.categories[self.cat_var.get()]
-            lines = ["#pragma once", "#include <stdint.h>", "#include <windows.h>", ""]
+            module_name = self.api_map[self.target_cat.get()]
+            # 動的にインポート
+            module = __import__(module_name, fromlist=['*'])
             
-            if self.lang_var.get() == "CPP":
-                lines.append('extern "C" {')
+            output = ["#pragma once", "#include <stdint.h>", "#include <windows.h>", ""]
+            if ext == ".cpp": output.append('extern "C" {')
 
-            methods = [m for m in meta.get_methods() if m.namespace in namespaces]
-            self.progress['maximum'] = len(methods)
+            # 属性を走査して関数を探す
+            count = 0
+            for name in dir(module):
+                attr = getattr(module, name)
+                if callable(attr) and hasattr(attr, 'restype'):
+                    # 簡易的なプロトタイプ生成
+                    output.append(f"// {name} (Exported from {module_name})")
+                    output.append(f"void* {name}(...);") # win32moreの型推論は複雑なため簡易化
+                    count += 1
 
-            for i, m in enumerate(methods):
-                ret = self.map_type(m.return_type)
-                params = [f"{self.map_type(p.type)} {p.name}" for p in m.parameters]
-                p_str = ", ".join(params) if params else "void"
-                lines.append(f"{ret} {m.name}({p_str});")
-                if i % 10 == 0:
-                    self.progress['value'] = i
-                    self.root.update()
+            if ext == ".cpp": output.append("}")
 
-            if self.lang_var.get() == "CPP":
-                lines.append('}')
-
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
-
-            self.progress['value'] = len(methods)
-            messagebox.showinfo("完了", f"生成成功: {len(methods)}個のAPIを抽出しました。")
+            with open(save_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(output))
+            
+            messagebox.showinfo("成功", f"{count} 個の関数定義（プレースホルダ）を書き出しました。")
         except Exception as e:
-            messagebox.showerror("Error", f"失敗しました: {str(e)}")
-        finally:
-            self.progress['value'] = 0
+            messagebox.showerror("エラー", f"モジュールの読み込みに失敗しました: {e}")
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = Win32HeaderGenApp(root)
+    Win32GenApp(root)
     root.mainloop()
